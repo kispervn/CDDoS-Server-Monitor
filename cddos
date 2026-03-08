@@ -1,0 +1,150 @@
+#!/bin/bash
+# CDDoS Server Stats Monitor - Standalone, Ubuntu 24.04
+# Set SKIP_DNS=0 to enable hostname lookup for top IPs.
+
+install_pkg() {
+	local pkg="$1"
+	local apt_pkg="${2:-$1}"
+	if command -v apt-get >/dev/null 2>&1; then
+		DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null
+		DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$apt_pkg" 2>/dev/null
+	elif command -v yum >/dev/null 2>&1; then
+		yum install -y "$pkg" 2>/dev/null
+	fi
+}
+
+[ ! -x /usr/bin/ss ]      && install_pkg iproute iproute2
+[ ! -x /usr/bin/netstat ] && install_pkg net-tools net-tools
+[ ! -x /usr/bin/sar ]     && install_pkg sysstat sysstat
+[ ! -d /tmp ]             && mkdir -p /tmp
+
+USE_SS=0
+command -v ss >/dev/null 2>&1 && USE_SS=1
+
+SKIP_DNS="${SKIP_DNS:-1}"
+MAX_IPS_FOR_DNS="${MAX_IPS_FOR_DNS:-100}"
+GETENT_TIMEOUT="${GETENT_TIMEOUT:-1}"
+
+# Colors (ANSI)
+R='\033[0m'    # Reset
+B='\033[1m'    # Bold
+D='\033[2m'    # Dim
+C='\033[36m'   # Cyan
+G='\033[32m'   # Green
+Y='\033[33m'   # Yellow
+W='\033[97m'   # White
+M='\033[35m'   # Magenta
+
+SECTOR_SIZE=512
+
+while true; do
+
+CPUdangdung=$(sar -u 1 1 2>/dev/null | awk '/Average:/ {v=100-$NF; printf "%.0f", (v<0||v>100)?0:v; exit}' || echo "0")
+
+IOsar=$(sar -b 1 1 2>/dev/null | grep Average:)
+bread_s=$(echo "$IOsar" | awk '{gsub(/\./,"",$5); print $5+0}')
+bwrtn_s=$(echo "$IOsar" | awk '{gsub(/\./,"",$6); print $6+0}')
+IOdangdung_doc=$((bread_s * SECTOR_SIZE / 1024 / 1024))
+IOdangdung_ghi=$((bwrtn_s * SECTOR_SIZE / 1024 / 1024))
+
+RAM_Now=$(free -m 2>/dev/null | awk 'NR==2 {print $3}')
+RAM_MAX=$(free -m 2>/dev/null | awk 'NR==2 {print $2}')
+RAMdangdung=$((RAM_MAX > 0 ? RAM_Now * 100 / RAM_MAX : 0))
+RAMdangdung_MB=${RAM_Now:-0}
+
+LoadAvg=$(cat /proc/loadavg 2>/dev/null | awk '{printf "%s %s %s", $1, $2, $3}' || echo "0 0 0")
+
+BWsar=$(sar -n DEV 1 1 2>/dev/null)
+bwnhanvao=$(echo "$BWsar" | grep Average: | grep -v IFACE | awk '{sum+=$5} END {printf "%.0f", sum+0}' 2>/dev/null)
+bwtruyendi=$(echo "$BWsar" | grep Average: | grep -v IFACE | awk '{sum+=$6} END {printf "%.0f", sum+0}' 2>/dev/null)
+NET_total=$((bwnhanvao + bwtruyendi))
+
+if [ "$USE_SS" = "1" ]; then
+	_conn_raw=$(ss -tan 2>/dev/null)
+else
+	_conn_raw=$(netstat -an 2>/dev/null)
+fi
+
+_out=$(echo "$_conn_raw" | awk -v use_ss="$USE_SS" '
+BEGIN { OFS=" " }
+/^$/ { next }
+use_ss==1 {
+	state=$1; peer=$5
+	sub(/:.*$/,"",peer)
+	if(peer!~/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ || peer=="0.0.0.0") next
+	if($4~/:80$/ || $4~/:80 /) { if($4!~/:8080/ && $4!~/:8081/) { n80++; if(state=="ESTAB") e80++; ip80[peer]++; ipall[peer]++ } }
+	if($4~/:443$/ || $4~/:443 /) { n443++; if(state=="ESTAB") e443++; ip443[peer]++; ipall[peer]++ }
+	total++; next
+}
+use_ss==0 {
+	state=$NF; peer=$5
+	sub(/:.*$/,"",peer)
+	if(peer!~/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ || peer=="0.0.0.0") next
+	if($4~/:80/) { if($4!~/:8080/ && $4!~/:8081/) { n80++; if(state=="ESTABLISHED") e80++; ip80[peer]++; ipall[peer]++ } }
+	if($4~/:443/) { n443++; if(state=="ESTABLISHED") e443++; ip443[peer]++; ipall[peer]++ }
+	total++
+}
+END {
+	print "STATS", n80+0, n443+0, e80+0, e443+0, total+0
+	for(p in ip80) print ip80[p], p
+	print "---80"
+	for(p in ip443) print ip443[p], p
+	print "---443"
+	for(p in ipall) print ipall[p], p
+}')
+
+_stats=$(echo "$_out" | awk '/^STATS / {print $2,$3,$4,$5,$6; exit}')
+read -r port80truyvan port443truyvan port80thietlap port443thietlap total_conn <<< "${_stats:-0 0 0 0 0}"
+_blk80=$(echo "$_out" | sed -n '1,/^---80$/p' | sed '/^STATS /d;/^---80$/d')
+_blk443=$(echo "$_out" | sed -n '/^---80$/,/^---443$/p' | sed '/^---80$/d;/^---443$/d')
+_ip_all=$(echo "$_out" | sed -n '/^---443$/,$p' | tail -n +2 | sort -k1 -rn)
+port80numberip=$(echo "$_blk80" | grep -c . 2>/dev/null || echo 0)
+port443numberip=$(echo "$_blk443" | grep -c . 2>/dev/null || echo 0)
+_totalip=$(echo "$_ip_all" | grep -c . 2>/dev/null || echo 0)
+
+listiphostname=$(echo "$_ip_all" | head -24 | while read -r cnt ip rest; do
+	[ -z "$ip" ] && continue
+	if [ "${SKIP_DNS}" = "1" ] || [ "${_totalip:-0}" -gt "${MAX_IPS_FOR_DNS}" ]; then
+		echo "$cnt $ip"
+	else
+		hn=$(timeout "${GETENT_TIMEOUT}" getent hosts "$ip" 2>/dev/null | awk '{print $2}')
+		[ -n "$hn" ] && echo "$cnt $ip $hn" || echo "$cnt $ip"
+	fi
+done)
+[ -z "$listiphostname" ] && listiphostname=$(echo "$_ip_all" | head -24)
+
+date=$(TZ=Asia/Ho_Chi_Minh date +"%H:%M %d-%m-%Y" 2>/dev/null || date +"%H:%M %d-%m-%Y")
+HN=$(hostname 2>/dev/null || echo "localhost")
+
+clear
+echo -e "${B}${C}╔═══════════════════════════════════════════════════════════════════╗${R}"
+echo -e "${B}${C}║${R}  ${W}CDDoS Server Monitor${R}  ${D}│${R}  $HN  ${D}│${R}  ${Y}$date${R}  ${B}${C}║${R}"
+echo -e "${B}${C}╚═══════════════════════════════════════════════════════════════════╝${R}"
+echo ""
+echo -e "  ${B}${C}■ RESOURCES${R}"
+echo -e "  ${D}─────────────────────────────────────────────────────────────────${R}"
+echo -e "  ${D}Load Average${R}     ${W}$LoadAvg${R}  ${D}(1m  5m  15m)${R}"
+echo -e "  ${D}CPU${R}              ${W}$CPUdangdung%${R}"
+echo -e "  ${D}RAM${R}              ${W}$RAMdangdung_MB MB${R}  ${D}($RAMdangdung%${R} used)"
+echo -e "  ${D}Disk I/O${R}         ${W}$IOdangdung_doc MB/s${R} read   ${W}$IOdangdung_ghi MB/s${R} write"
+echo ""
+echo -e "  ${B}${C}■ NETWORK${R}"
+echo -e "  ${D}─────────────────────────────────────────────────────────────────${R}"
+echo -e "  ${D}Bandwidth${R}        ${W}$NET_total kB/s${R} total   ${D}(In:${R} ${W}$bwnhanvao${R}  ${D}Out:${R} ${W}$bwtruyendi${R} kB/s)"
+echo ""
+echo -e "  ${B}${C}■ CONNECTIONS${R}"
+echo -e "  ${D}─────────────────────────────────────────────────────────────────${R}"
+echo -e "  ${D}Port 80${R}          ${W}$port80truyvan${R} queries   ${W}$port80numberip${R} IPs   ${D}ESTAB:${R} ${W}$port80thietlap${R}"
+echo -e "  ${D}Port 443${R}         ${W}$port443truyvan${R} queries   ${W}$port443numberip${R} IPs   ${D}ESTAB:${R} ${W}$port443thietlap${R}"
+echo -e "  ${D}Total${R}            ${W}$total_conn${R} connections   ${D}Unique IPs:${R} ${W}$_totalip${R}"
+echo ""
+echo -e "  ${B}${C}■ TOP IPs (by connections)${R}"
+echo -e "  ${D}─────────────────────────────────────────────────────────────────${R}"
+echo "$listiphostname" | head -20 | while read -r line; do
+	echo -e "  ${G}$line${R}"
+done
+echo ""
+echo -e "  ${D}${M}Ctrl+C to exit${R}"
+echo ""
+
+done
