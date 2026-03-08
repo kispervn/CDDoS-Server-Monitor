@@ -1,5 +1,6 @@
 #!/bin/bash
 # CDDoS Server Stats Monitor - Standalone, Ubuntu 24.04
+# Product of CDDoS.net | Author: KisPer
 # Set SKIP_DNS=0 to enable hostname lookup for top IPs.
 
 install_pkg() {
@@ -145,6 +146,7 @@ echo "$listiphostname" | head -20 | while read -r line; do
 done
 echo ""
 echo -e "  ${D}${M}Ctrl+C to exit${R}"
+echo -e "  ${D}CDDoS.net product | Author: KisPer — Please respect the original creator${R}"
 echo ""
 
 done
