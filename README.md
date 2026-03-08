@@ -23,6 +23,24 @@ CDDoS Server Monitor displays live server statistics: CPU load, RAM usage, disk 
 
 ---
 
+## Install
+
+Download and run:
+
+```bash
+curl -sO https://raw.githubusercontent.com/kispervn/CDDoS-Server-Monitor/refs/heads/main/cddos
+chmod +x cddos
+```
+
+Or with wget:
+
+```bash
+wget -q https://raw.githubusercontent.com/kispervn/CDDoS-Server-Monitor/refs/heads/main/cddos -O cddos
+chmod +x cddos
+```
+
+---
+
 ## Requirements
 
 - Bash
@@ -39,6 +57,8 @@ Dependencies are auto-installed via apt or yum.
 ```bash
 ./cddos
 ```
+
+Press `Ctrl+C` to exit.
 
 ---
 
