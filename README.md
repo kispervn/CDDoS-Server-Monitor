@@ -2,7 +2,7 @@
 
 Monitor server resources, network traffic, and connections in real time. A lightweight CLI server monitor for Linux (Ubuntu 24.04, Debian, RHEL) with no dependencies on external config files.
 
-![CDDoS Server Monitor - Real-time Linux server stats dashboard showing CPU, RAM, network, connections](https://sv2.anhsieuviet.com/2026/03/08/image4494f193c652954a.png)
+![CDDoS Server Monitor - Real-time Linux server stats dashboard showing CPU, RAM, network, connections](https://sv2.anhsieuviet.com/2026/03/08/image9840d22dce1bcd7b.png)
 
 ---
 
